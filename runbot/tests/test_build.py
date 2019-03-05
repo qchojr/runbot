@@ -129,6 +129,16 @@ class Test_Build(common.TransactionCase):
         mock_logger.debug.assert_called_with(log_first_part, 'A good reason')
 
 
+def rev_parse(repo, branch_name):
+    """
+    simulate a rev parse by returning a fake hash of form
+    'rp_odoo-dev/enterprise_saas-12.2__head'
+    should be overwitten if a pr head should match a branch head
+    """
+    head_hash = 'rp_%s_%s_head' % (repo.name.split(':')[1], branch_name.split('/')[-1])
+    return head_hash
+
+
 class TestClosestBranch(common.TransactionCase):
 
     def branch_description(self, branch):
@@ -139,7 +149,7 @@ class TestClosestBranch(common.TransactionCase):
         extra_repo = build.repo_id.dependency_ids[0]
         self.assertEqual(closest, build._get_closest_branch_name(extra_repo.id), "build on %s didn't had the extected closest branch" % self.branch_description(build.branch_id))
 
-    def assertDuplicate(self, branch1, branch2, b1_closest=None, b2_closest=None):
+    def assertDuplicate(self, branch1, branch2, b1_closest=None, b2_closest=None, noDuplicate=False):
         """
         Test that the creation of a build on branch1 and branch2 detects duplicate, no matter the order.
         Also test that build on branch1 closest_branch_name result is b1_closest if given
@@ -167,8 +177,15 @@ class TestClosestBranch(common.TransactionCase):
             if b2_closest:
                 self.assertClosest(build2, closest[b2])
 
-            self.assertEqual(build2.duplicate_id.id, build1.id, "build on %s wasn't detected as duplicate of build on %s" % (self.branch_description(b2), self.branch_description(b1)))
-            self.assertEqual(build2.state, 'duplicate')
+            if noDuplicate:
+                self.assertNotEqual(build2.state, 'duplicate')
+                self.assertFalse(build2.duplicate_id, "build on %s was detected as duplicate of build %s" % (self.branch_description(b2), build2.duplicate_id))
+            else:
+                self.assertEqual(build2.duplicate_id.id, build1.id, "build on %s wasn't detected as duplicate of build on %s" % (self.branch_description(b2), self.branch_description(b1)))
+                self.assertEqual(build2.state, 'duplicate')
+
+    def assertNoDuplicate(self, branch1, branch2, b1_closest=None, b2_closest=None):
+        self.assertDuplicate(branch1, branch2, b1_closest=b1_closest, b2_closest=b2_closest, noDuplicate=True)
 
     def setUp(self):
         """ Setup repositories that mimick the Odoo repos """
@@ -193,28 +210,34 @@ class TestClosestBranch(common.TransactionCase):
         self.Branch = self.env['runbot.branch']
         self.branch_odoo_master = self.Branch.create({
             'repo_id': self.community_repo.id,
-            'name': 'refs/heads/master'
+            'name': 'refs/heads/master',
+            'sticky': True,
         })
         self.branch_odoo_10 = self.Branch.create({
             'repo_id': self.community_repo.id,
-            'name': 'refs/heads/10.0'
+            'name': 'refs/heads/10.0',
+            'sticky': True,
         })
         self.branch_odoo_11 = self.Branch.create({
             'repo_id': self.community_repo.id,
-            'name': 'refs/heads/11.0'
+            'name': 'refs/heads/11.0',
+            'sticky': True,
         })
 
         self.branch_enterprise_master = self.Branch.create({
             'repo_id': self.enterprise_repo.id,
-            'name': 'refs/heads/master'
+            'name': 'refs/heads/master',
+            'sticky': True,
         })
         self.branch_enterprise_10 = self.Branch.create({
             'repo_id': self.enterprise_repo.id,
-            'name': 'refs/heads/10.0'
+            'name': 'refs/heads/10.0',
+            'sticky': True,
         })
         self.branch_enterprise_11 = self.Branch.create({
             'repo_id': self.enterprise_repo.id,
-            'name': 'refs/heads/11.0'
+            'name': 'refs/heads/11.0',
+            'sticky': True,
         })
 
         self.Build = self.env['runbot.build']
@@ -243,6 +266,7 @@ class TestClosestBranch(common.TransactionCase):
     def test_closest_branch_01(self, mock_is_on_remote):
         """ test find a matching branch in a target repo based on branch name """
         mock_is_on_remote.return_value = True
+
         self.Branch.create({
             'repo_id': self.community_dev_repo.id,
             'name': 'refs/heads/10.0-fix-thing-moc'
@@ -251,14 +275,16 @@ class TestClosestBranch(common.TransactionCase):
             'repo_id': self.enterprise_dev_repo.id,
             'name': 'refs/heads/10.0-fix-thing-moc'
         })
-        addons_build = self.Build.create({
-            'branch_id': addons_branch.id,
-            'name': 'd0d0caca0000ffffffffffffffffffffffffffff',
-        })
+        with patch('odoo.addons.runbot.models.repo.runbot_repo._rev_parse', new=rev_parse):
+            addons_build = self.Build.create({
+                'branch_id': addons_branch.id,
+                'name': 'd0d0caca0000ffffffffffffffffffffffffffff',
+            })
         self.assertEqual((self.enterprise_dev_repo.id, addons_branch.name, 'exact'), addons_build._get_closest_branch_name(self.enterprise_dev_repo.id))
 
     @patch('odoo.addons.runbot.models.repo.runbot_repo._github')
     def test_closest_branch_02(self, mock_github):
+
         """ test find two matching PR having the same head name """
         mock_github.return_value = {
             # "head label" is the repo:branch where the PR comes from
@@ -286,10 +312,11 @@ class TestClosestBranch(common.TransactionCase):
             'repo_id': self.enterprise_repo.id,
             'name': 'refs/pull/789101'
         })
-        enterprise_build = self.Build.create({
-            'branch_id': enterprise_pr.id,
-            'name': 'd0d0caca0000ffffffffffffffffffffffffffff',
-        })
+        with patch('odoo.addons.runbot.models.repo.runbot_repo._rev_parse', new=rev_parse):
+            enterprise_build = self.Build.create({
+                'branch_id': enterprise_pr.id,
+                'name': 'd0d0caca0000ffffffffffffffffffffffffffff',
+            })
 
         self.assertEqual((self.community_dev_repo.id, 'refs/heads/bar_branch', 'exact PR'), enterprise_build._get_closest_branch_name(self.community_repo.id))
 
@@ -298,6 +325,7 @@ class TestClosestBranch(common.TransactionCase):
     def test_closest_branch_02_improved(self, mock_branch_exists, mock_github):
         """ test that a PR in enterprise with a matching PR in Community
         uses the matching one"""
+
         mock_branch_exists.return_value = True
 
         self.Branch.create({
@@ -339,13 +367,13 @@ class TestClosestBranch(common.TransactionCase):
             'repo_id': self.community_repo.id,
             'name': 'refs/pull/32156'
         })
-
-        self.assertDuplicate(
-            ent_dev_branch,
-            ent_pr,
-            (self.community_dev_repo.id, 'refs/heads/saas-12.2-blabla', 'exact'),
-            (self.community_dev_repo.id, 'refs/heads/saas-12.2-blabla', 'exact PR')
-        )
+        with patch('odoo.addons.runbot.models.repo.runbot_repo._rev_parse', new=rev_parse):
+            self.assertDuplicate(
+                ent_dev_branch,
+                ent_pr,
+                (self.community_dev_repo.id, 'refs/heads/saas-12.2-blabla', 'exact'),
+                (self.community_dev_repo.id, 'refs/heads/saas-12.2-blabla', 'exact PR')
+            )
 
     @patch('odoo.addons.runbot.models.branch.runbot_branch._branch_exists')
     def test_closest_branch_03(self, mock_branch_exists):
@@ -355,10 +383,11 @@ class TestClosestBranch(common.TransactionCase):
             'repo_id': self.enterprise_dev_repo.id,
             'name': 'refs/heads/10.0-fix-blah-blah-moc'
         })
-        addons_build = self.Build.create({
-            'branch_id': addons_branch.id,
-            'name': 'd0d0caca0000ffffffffffffffffffffffffffff',
-        })
+        with patch('odoo.addons.runbot.models.repo.runbot_repo._rev_parse', new=rev_parse):
+            addons_build = self.Build.create({
+                'branch_id': addons_branch.id,
+                'name': 'd0d0caca0000ffffffffffffffffffffffffffff',
+            })
         self.assertEqual((self.community_repo.id, 'refs/heads/10.0', 'prefix'), addons_build._get_closest_branch_name(self.community_repo.id))
 
     @patch('odoo.addons.runbot.models.repo.runbot_repo._github')
@@ -402,13 +431,13 @@ class TestClosestBranch(common.TransactionCase):
             'repo_id': self.enterprise_repo.id,
             'name': 'refs/pull/3721'
         })
-
-        self.assertDuplicate(
-            ent_pr,
-            ent_dev_branch,
-            (self.community_repo.id, 'refs/heads/saas-12.2', 'default'),
-            (self.community_repo.id, 'refs/heads/saas-12.2', 'prefix'),
-        )
+        with patch('odoo.addons.runbot.models.repo.runbot_repo._rev_parse', new=rev_parse):
+            self.assertDuplicate(
+                ent_pr,
+                ent_dev_branch,
+                (self.community_repo.id, 'refs/heads/saas-12.2', 'default'),
+                (self.community_repo.id, 'refs/heads/saas-12.2', 'prefix'),
+            )
 
     @patch('odoo.addons.runbot.models.repo.runbot_repo._github')
     @patch('odoo.addons.runbot.models.branch.runbot_branch._branch_exists')
@@ -440,13 +469,13 @@ class TestClosestBranch(common.TransactionCase):
             'repo_id': self.enterprise_repo.id,
             'name': 'refs/pull/3721'
         })
-
-        self.assertDuplicate(
-            ent_dev_branch,
-            ent_pr,
-            (self.community_dev_repo.id, 'refs/heads/saas-12.2-blabla', 'exact'),
-            (self.community_dev_repo.id, 'refs/heads/saas-12.2-blabla', 'no PR')
-        )
+        with patch('odoo.addons.runbot.models.repo.runbot_repo._rev_parse', new=rev_parse):
+            self.assertDuplicate(
+                ent_dev_branch,
+                ent_pr,
+                (self.community_dev_repo.id, 'refs/heads/saas-12.2-blabla', 'exact'),
+                (self.community_dev_repo.id, 'refs/heads/saas-12.2-blabla', 'no PR')
+            )
 
     @patch('odoo.addons.runbot.models.repo.runbot_repo._github')
     def test_closest_branch_05(self, mock_github):
@@ -470,10 +499,11 @@ class TestClosestBranch(common.TransactionCase):
             'repo_id': self.enterprise_repo.id,
             'name': 'refs/pull/789101'
         })
-        addons_build = self.Build.create({
-            'branch_id': addons_pr.id,
-            'name': 'd0d0caca0000ffffffffffffffffffffffffffff',
-        })
+        with patch('odoo.addons.runbot.models.repo.runbot_repo._rev_parse', new=rev_parse):
+            addons_build = self.Build.create({
+                'branch_id': addons_pr.id,
+                'name': 'd0d0caca0000ffffffffffffffffffffffffffff',
+            })
         self.assertEqual((self.community_repo.id, 'refs/heads/%s' % server_pr.target_branch_name, 'default'), addons_build._get_closest_branch_name(self.community_repo.id))
 
     def test_closest_branch_05_master(self):
@@ -483,9 +513,46 @@ class TestClosestBranch(common.TransactionCase):
             'repo_id': self.enterprise_dev_repo.id,
             'name': 'refs/head/badref-fix-foo'
         })
-        addons_build = self.Build.create({
-            'branch_id': addons_branch.id,
-            'name': 'd0d0caca0000ffffffffffffffffffffffffffff',
-        })
+        with patch('odoo.addons.runbot.models.repo.runbot_repo._rev_parse', new=rev_parse):
+            addons_build = self.Build.create({
+                'branch_id': addons_branch.id,
+                'name': 'd0d0caca0000ffffffffffffffffffffffffffff',
+            })
 
         self.assertEqual((self.community_repo.id, 'refs/heads/master', 'default'), addons_build._get_closest_branch_name(self.community_repo.id))
+
+    @patch('odoo.addons.runbot.models.branch.runbot_branch._branch_exists')
+    def test_no_duplicate_update_a(self, mock_branch_exists):
+        """push a dev branch in enterprise with same head as sticky, but with a matching branch in community"""
+        mock_branch_exists.return_value = True
+        community_sticky_branch = self.Branch.create({
+            'repo_id': self.community_repo.id,
+            'name': 'refs/heads/saas-12.2',
+            'sticky': True,
+        })
+        community_dev_branch = self.Branch.create({
+            'repo_id': self.community_dev_repo.id,
+            'name': 'refs/heads/saas-12.2-dev1',
+        })
+        enterprise_sticky_branch = self.Branch.create({
+            'repo_id': self.enterprise_repo.id,
+            'name': 'refs/heads/saas-12.2',
+            'sticky': True,
+        })
+        enterprise_dev_branch = self.Branch.create({
+            'repo_id': self.enterprise_dev_repo.id,
+            'name': 'refs/heads/saas-12.2-dev1'
+        })
+        # we shouldn't have duplicate since community_dev_branch exists
+        with patch('odoo.addons.runbot.models.repo.runbot_repo._rev_parse', new=rev_parse):
+            # lets create an old enterprise build
+            self.Build.create({
+                'branch_id': enterprise_sticky_branch.id,
+                'name': 'd0d0caca0000ffffffffffffffffffffffffffff',
+            })
+            self.assertNoDuplicate(
+                enterprise_sticky_branch,
+                enterprise_dev_branch,
+                (self.community_repo.id, 'refs/heads/saas-12.2', 'exact'),
+                (self.community_dev_repo.id, 'refs/heads/saas-12.2-dev1', 'exact'),
+            )

@@ -169,6 +169,7 @@ class runbot_branch(models.Model):
             branches = Branch.search(domain, order='id DESC')
             branches = sorted(branches, key=sort_by_repo)
             for branch in branches:
+                # shouldn't we only match on sticky?
                 if name.startswith('%s-' % branch.branch_name) and self._branch_exists(branch.id):
                     return (branch, 'prefix')
 

@@ -81,6 +81,9 @@ class runbot_repo(models.Model):
             _logger.info("git command: %s", ' '.join(cmd))
             return subprocess.check_output(cmd).decode('utf-8')
 
+    def _rev_parse(self, branch_name):
+        return self._git(['rev-parse', branch_name]).strip()
+
     def _git_export(self, treeish, dest):
         """Export a git repo to dest"""
         self.ensure_one()

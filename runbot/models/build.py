@@ -94,8 +94,8 @@ class runbot_build(models.Model):
         ('running', 'Running job only'),
         ('all', 'All jobs'),
         ('none', 'Do not execute jobs'),
-        ],
-    )
+    ])
+    dependency_ids = fields.One2many('runbot.build.dependency', 'build_id')
 
     def copy(self, values=None):
         raise UserError("Cannot duplicate build!")
@@ -110,52 +110,74 @@ class runbot_build(models.Model):
         extra_info.update({'job_type': job_type})
         context = self.env.context
 
-        if not context.get('force_rebuild'):
+        # compute dependencies
+        repo = build_id.repo_id
+        create_vals = []
+        nb_deps = len(repo.dependency_ids)
+        for extra_repo in repo.dependency_ids:
+            (build_closets_branch, match_type) = build_id.branch_id._get_closest_branch(extra_repo.id)
+            closest_name = build_closets_branch.name
+            closest_branch_repo = build_closets_branch.repo_id
+            last_commit = closest_branch_repo._rev_parse(closest_name)
+            create_vals.append({
+                'build_id': build_id.id,
+                'dependecy_repo': extra_repo.id,
+                'closest_branch_id': build_closets_branch.id,
+                'dependency_hash': last_commit,
+                'match_type': match_type,
+            })
+
+        for vals in create_vals:
+            self.env['runbot.build.dependency'].create(vals)
+
+        if not context.get('force_rebuild'):   # not vals.get('build_type') == rebuild':
             # detect duplicate
             duplicate_id = None
             domain = [
                 ('repo_id', '=', build_id.repo_id.duplicate_id.id),
                 ('name', '=', build_id.name),
                 ('duplicate_id', '=', False),
-                ('build_type', '!=', 'indirect'),
+                # ('build_type', '!=', 'indirect'), # we could keep this but duplicate will be the older possi
                 '|', ('result', '=', False), ('result', '!=', 'skipped')
             ]
-            # find duplicate:
-            # -pushing a commit on a branch with a PR
-            # -pushing a commit from sticky branch on a dev branch, we want to match sticky one
+            candidates = self.search(domain)
+            if candidates and nb_deps:
+                # chack that all depedency are matching.
 
-            # we may have multiple duplicate ?
-            # lets push master's head on enterprise or design_theme.
-            # In some case we can have more than 100 duplicates with previous domain
-            # since design_theme and enterprise are rebuild at each community sticky build and
-            # name almost never changes in this case (especially for design_theme)
-            #  could we improve the check?
-            #   -branch_id?
-            #       We could take only one build by branch, the older of the branch? the last of the branch?
-            #       older is cleaner, it wont be a rebuidl
-            #       newer is more logical, closer to the result we want, a rebuild or an automated build
-            #       making branch_id unique makes a lot of sence since _get_closest_branch_name only uses
-            #       self.branch_id and self.repo_id, and self.repo_id is related='branch_id.repo_id
-            #       note that we are showing with this example that a duplicate matching may be a little "random" in sence since
-            #       what we real need to define a build is the head of this branch.
-            #   -build_type!= indirect looks a good idea, but result wont be based on current state of closest branch.
-            #    ->note that it would only be a problem if we push an empty enterprise/design branch without a community branch.
-            #       because in other cases we wont match this branch as a duplicate
+                # Note: I would avoid to compare closest_branch_id, because the same hash could be found on
+                # 2 different branches (pr + branch). But we want to ensure that the
+                # hash is comming from the right repo, we dont want to compare community
+                # hash with enterprise hash (unlikely to happen, but who knows).
+                # a dood solution would be to compare the hash/dependecy_repo hash, but we would
+                # actually need to match either a dependency_repo or its duplicate (case pr -> branch or case branch -> branch)
+                
+                # Note2 compared to previous version we have a change of behavious
+                # Lets push a branch in design themes with existing head, if a dependecy has been pushed but not yet
+                # rebuilded as indirect, this branch wont find a duplicate. But indirect should match this one.
+                # (exept if we remove duplicate computation on indirect)
+                self.env.cr.execute("""
+                    SELECT DUPLIDEPS.build_id
+                    FROM runbot_build_dependency as DUPLIDEPS
+                    JOIN runbot_build_dependency as BUILDDEPS
+                    ON BUILDDEPS.dependency_hash = DUPLIDEPS.dependency_hash
+                    AND BUILDDEPS.closest_branch_id = DUPLIDEPS.closest_branch_id
+                    AND BUILDDEPS.build_id = %s
+                    AND DUPLIDEPS.build_id in %s
+                    GROUP BY DUPLIDEPS.build_id
+                    HAVING COUNT(DUPLIDEPS.*) = %s
+                    ORDER BY DUPLIDEPS.build_id DESC
+                    LIMIT 1
+                """, (build_id.id, tuple(candidates.ids), nb_deps))
 
-            build_closets_branch_names = {}
-            for duplicate in self.search(domain, limit=10):
-                duplicate_id = duplicate.id
-                # Consider the duplicate if its closest branches are the same than the current build closest branches.
-                for extra_repo in build_id.repo_id.dependency_ids:
-                    if extra_repo.id not in build_closets_branch_names:
-                        build_closets_branch_names[extra_repo.id] = build_id._get_closest_branch_name(extra_repo.id)[1]
-                    build_closest_name = build_closets_branch_names[extra_repo.id]
-                    duplicate_closest_name = duplicate._get_closest_branch_name(extra_repo.id)[1]
-                    if build_closest_name != duplicate_closest_name:
-                        duplicate_id = None
-                if duplicate_id:
-                    extra_info.update({'state': 'duplicate', 'duplicate_id': duplicate_id})
-                    break
+                filtered_candidates_ids = self.env.cr.fetchall()
+
+                if filtered_candidates_ids:
+                    duplicate_id = filtered_candidates_ids[0]
+            else:
+                duplicate_id = candidates[0].id if candidates else False
+
+            if duplicate_id:
+                extra_info.update({'state': 'duplicate', 'duplicate_id': duplicate_id})
 
         build_id.write(extra_info)
         if build_id.state == 'duplicate' and build_id.duplicate_id.state in ('running', 'done'):
@@ -505,17 +527,18 @@ class runbot_build(models.Model):
                     ]
                     _logger.debug("local modules_to_test for build %s: %s", build.dest, modules_to_test)
 
-                for extra_repo in build.repo_id.dependency_ids:
-                    repo_id, closest_name, server_match = build._get_closest_branch_name(extra_repo.id)
-                    repo = self.env['runbot.repo'].browse(repo_id)
-                    _logger.debug('branch %s of %s: %s match branch %s of %s',
-                                  build.branch_id.name, build.repo_id.name,
-                                  server_match, closest_name, repo.name)
+                # todo make it backward compatible, or create migration script?
+                for build_dependency in build.dependency_ids:
+                    closest_branch = build_dependency.closest_branch_id
+                    repo = closest_branch_id.repo_id
+                    closest_name = closest_branch_id.name
+                    server_match = closest_branch_id.match_type
+
                     build._log(
                         'Building environment',
                         '%s match branch %s of %s' % (server_match, closest_name, repo.name)
                     )
-                    latest_commit = repo._git(['rev-parse', closest_name]).strip()
+                    latest_commit = build_dependency.dependency_hash
                     commit_oneline = repo._git(['show', '--pretty="%H -- %s"', '-s', latest_commit]).strip()
                     build._log(
                         'Building environment',
@@ -835,3 +858,15 @@ class runbot_build(models.Model):
         if smtp_host:
             cmd += ['--smtp', smtp_host]
         return docker_run(cmd, log_path, build._path(), build._get_docker_name(), exposed_ports = [build.port, build.port + 1])
+
+
+class runbot_build_dependency(models.Model):
+    _name = "runbot.build.dependency"
+
+    build_id = fields.Many2one('runbot.build', 'Build', required=True, ondelete='cascade', index=True)
+    dependecy_repo = fields.Many2one('runbot.repo', 'Dependency repo', required=True, ondelete='cascade', index=True)
+    # build_hash = fields.Char(related=build_id.name, required=True, index=True, autojoin=True)
+    dependency_hash = fields.Char('Name of commit')
+    # just in case store branch
+    closest_branch_id = fields.Many2one('runbot.branch', 'Branch', required=True, ondelete='cascade')
+    match_type = fields.Char('Match Type')
