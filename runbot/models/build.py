@@ -117,9 +117,30 @@ class runbot_build(models.Model):
                 ('repo_id', '=', build_id.repo_id.duplicate_id.id),
                 ('name', '=', build_id.name),
                 ('duplicate_id', '=', False),
+                ('build_type', '!=', 'indirect'),
                 '|', ('result', '=', False), ('result', '!=', 'skipped')
             ]
-            # TODO xdo extract build_id._get_closest_branch_name(extra_repo.id) here
+            # find duplicate:
+            # -pushing a commit on a branch with a PR
+            # -pushing a commit from sticky branch on a dev branch, we want to match sticky one
+
+            # we may have multiple duplicate ?
+            # lets push master's head on enterprise or design_theme.
+            # In some case we can have more than 100 duplicates with previous domain
+            # since design_theme and enterprise are rebuild at each community sticky build and
+            # name almost never changes in this case (especially for design_theme)
+            #  could we improve the check?
+            #   -branch_id?
+            #       We could take only one build by branch, the older of the branch? the last of the branch?
+            #       older is cleaner, it wont be a rebuidl
+            #       newer is more logical, closer to the result we want, a rebuild or an automated build
+            #       making branch_id unique makes a lot of sence since _get_closest_branch_name only uses
+            #       self.branch_id and self.repo_id, and self.repo_id is related='branch_id.repo_id
+            #       note that we are showing with this example that a duplicate matching may be a little "random" in sence since
+            #       what we real need to define a build is the head of this branch.
+            #   -build_type!= indirect looks a good idea, but result wont be based on current state of closest branch.
+            #    ->note that it would only be a problem if we push an empty enterprise/design branch without a community branch.
+            #       because in other cases we wont match this branch as a duplicate
             build_closets_branch_names = {}
             for duplicate in self.search(domain, limit=10):
                 duplicate_id = duplicate.id
