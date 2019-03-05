@@ -120,11 +120,14 @@ class runbot_build(models.Model):
                 '|', ('result', '=', False), ('result', '!=', 'skipped')
             ]
             # TODO xdo extract build_id._get_closest_branch_name(extra_repo.id) here
+            build_closets_branch_names = {}
             for duplicate in self.search(domain, limit=10):
                 duplicate_id = duplicate.id
                 # Consider the duplicate if its closest branches are the same than the current build closest branches.
                 for extra_repo in build_id.repo_id.dependency_ids:
-                    build_closest_name = build_id._get_closest_branch_name(extra_repo.id)[1]
+                    if extra_repo.id not in build_closets_branch_names:
+                        build_closets_branch_names[extra_repo.id] = build_id._get_closest_branch_name(extra_repo.id)[1]
+                    build_closest_name = build_closets_branch_names[extra_repo.id]
                     duplicate_closest_name = duplicate._get_closest_branch_name(extra_repo.id)[1]
                     if build_closest_name != duplicate_closest_name:
                         duplicate_id = None
