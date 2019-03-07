@@ -120,13 +120,20 @@ class runbot_branch(models.Model):
             target_repo_ids.append(r.id)
             r = r.duplicate_id
 
+        # note we could define if we need to search in target or duplicate, (pr-> target, branch -> duplicate(s?))
+        # but lets consider some corner case
+        #   pr from dev to dev (duplicate is in same repo)
+        #   mistackely pushing branch in odoo instead of dev (duplicate maye be is in same repo)
+
         _logger.debug('Search closest of %s (%s) in repos %r', name, repo.name, target_repo_ids)
 
-        sort_by_repo = lambda d: (not d.sticky,      # sticky first
-                                  target_repo_ids.index(d.repo_id[0].id),
-                                  -1 * d.branch_name,  # little change of logic here, is it ok?
-                                  -1 * d.id)
-        result_for = lambda d, match='exact': (d['repo_id'][0].id, d['name'], match)
+        def sort_by_repo(branch):
+            return (
+                not branch.sticky,      # sticky first
+                target_repo_ids.index(branch.repo_id[0].id),
+                -1 * len(branch.branch_name),  # little change of logic here, is it ok? should only be sorted on branch_name in 3 case
+                -1 * branch.id
+            )
 
         # 1. same name, not a PR
         if not self.pull_head_name:  # not a pr
@@ -137,7 +144,7 @@ class runbot_branch(models.Model):
             ]
             targets = Branch.search(domain, order='id DESC')
             targets = sorted(targets, key=sort_by_repo)
-            if targets and self._branch_exists(targets[0]['id']):
+            if targets and targets[0]._is_on_remote():
                 return (targets[0], 'exact')
 
         # 2. PR with head name equals
@@ -154,10 +161,13 @@ class runbot_branch(models.Model):
                 pi = pull._get_pull_info()
                 if pi.get('state') == 'open':
                     if ':' in self.pull_head_name:  # we assume that branch exists if we got pull info
-                        pr_branch_name = self.pull_head_name.split(':')[1]
-                        pr_branch_ref = 'refs/heads/%s' % pr_branch_name
-                        pr_branch = self.search([('repo_id', '=', pull.repo_id.duplicate_id.id), ('name', '=', pr_branch_ref)])
-                        if pr_branch:
+                        (repo_name, pr_branch_name) = self.pull_head_name.split(':')
+                        repo = self.env['runbot.repo'].browse(target_repo_ids).filtered(lambda r: ':%s/' % repo_name in r.name)
+                        # most of the time repo will be pull.repo_id.duplicate_id, but it is still possible to have a pr pointing the same repo
+                        if repo:
+                            pr_branch_ref = 'refs/heads/%s' % pr_branch_name
+                            pr_branch = self._get_or_create_branch(repo.id, pr_branch_ref)
+                            # use _get_or_create_branch in case a pr is scanned before pull_head_name branch.
                             return (pr_branch, 'exact PR')
                     return (pull, 'exact PR')
 
@@ -170,36 +180,43 @@ class runbot_branch(models.Model):
             branches = sorted(branches, key=sort_by_repo)
             for branch in branches:
                 # shouldn't we only match on sticky?
-                if name.startswith('%s-' % branch.branch_name) and self._branch_exists(branch.id):
+                if name.startswith('%s-' % branch.branch_name) and branch._is_on_remote():
                     return (branch, 'prefix')
 
         # 4.Match a PR in enterprise without community PR
         if self.pull_head_name:
-            if self.name.startswith('refs/pull') and ':' in name:
-                pr_branch_name = name.split(':')[1]
-                duplicate_branch_name = 'refs/heads/%s' % pr_branch_name
-                domain = [
-                    ('repo_id', 'in', target_repo_ids),  # target_repo_ids should contain the target duplicate repo
-                    ('branch_name', '=', pr_branch_name),
-                    ('pull_head_name', '=', False),
-                ]
-                targets = Branch.search(domain, order='id DESC')
-                targets = sorted(targets, key=sort_by_repo)
-                if targets and self._branch_exists(targets[0].id):
-                    return (targets[0], 'no PR')
+            if self.name.startswith('refs/pull') and ':' in self.pull_head_name:
+                (repo_name, pr_branch_name) = self.pull_head_name.split(':')
+                repo = self.env['runbot.repo'].browse(target_repo_ids).filtered(lambda r: ':%s/' % repo_name in r.name)
+                if repo:
+                    duplicate_branch_name = 'refs/heads/%s' % pr_branch_name
+                    domain = [
+                        ('repo_id', '=', repo.id),  # target_repo_ids should contain the target duplicate repo
+                        ('branch_name', '=', pr_branch_name),
+                        ('pull_head_name', '=', False),
+                    ]
+                    targets = Branch.search(domain, order='id DESC')
+                    targets = sorted(targets, key=sort_by_repo)
+                    if targets and targets[0]._is_on_remote():
+                        return (targets[0], 'no PR')
 
         # 5. last-resort value
-        default_repo_id = target_repo.id
-        target_branch_name = 'master'
-
         if self.target_branch_name:
-            target_branch_name = self.target_branch_name
-        else:
-            default_repo_id = target_repo.duplicate_id
-
-        target_ref = 'refs/heads/%s' % target_branch_name
-        default_branch = self.search([('repo_id', 'in', target_repo_ids), ('name', '=', target_ref)])
-        # assert branch
+            default_target_ref = 'refs/heads/%s' % self.target_branch_name
+            default_branch = self.search([('repo_id', 'in', target_repo_ids), ('name', '=', default_target_ref)], limit=1)
+            if default_branch:
+                return (default_branch, 'default')
+            # target branch does not exists? use master
+            # it is possible that some corner case may miss the right dependecies:
+            # default_target_ref exists on git, but not in db.
+            # meaning that target_branch_name was juste created
+            # it may be possible if runbot is down for a while, a branch is created
+            # and a pr is created targeting this branch. On next scan, pr may be scanned befor branch.
+            # Anyways, it is an unlikely case, and the only side effect will be the new build to be 
+            # executed with master branch
+        default_target_ref = 'refs/heads/master'
+        default_branch = self.search([('repo_id', 'in', target_repo_ids), ('name', '=', default_target_ref)], limit=1)
+        # we assume that master will always exists
         return (default_branch, 'default')
 
     def _branch_exists(self, branch_id):
@@ -208,3 +225,11 @@ class runbot_branch(models.Model):
         if branch and branch[0]._is_on_remote():
             return True
         return False
+
+    def _get_or_create_branch(self, repo_id, name):
+        res = self.search([('repo_id', '=', repo_id), ('name', '=', name)], limit=1)
+        if res:
+            return res
+        _logger.warning('creating missing branch %s', name)
+        branch = Branch.create({'repo_id': repo.id, 'name': name})
+        return branch
