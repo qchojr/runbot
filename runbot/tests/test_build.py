@@ -556,3 +556,143 @@ class TestClosestBranch(common.TransactionCase):
                 (self.community_repo.id, 'refs/heads/saas-12.2', 'exact'),
                 (self.community_dev_repo.id, 'refs/heads/saas-12.2-dev1', 'exact'),
             )
+
+    @patch('odoo.addons.runbot.models.repo.runbot_repo._github')
+    def test_external_pr_closest_branch(self, mock_github):
+        """ test last resort value target_name"""
+        mock_github.return_value = {
+            'head': {'label': 'external_repo:11.0-fix'},
+            'base': {'ref': '11.0'},
+            'state': 'open'
+        }
+        enterprise_pr = self.Branch.create({
+            'repo_id': self.enterprise_repo.id,
+            'name': 'refs/pull/123456'
+        })
+        with patch('odoo.addons.runbot.models.repo.runbot_repo._rev_parse', new=rev_parse):
+            enterprise_pr = self.Build.create({
+                'branch_id': enterprise_pr.id,
+                'name': 'd0d0caca0000ffffffffffffffffffffffffffff',
+            })
+            dependency_repo = self.enterprise_repo.dependency_ids[0]
+            closest_branch_name = enterprise_pr._get_closest_branch_name(dependency_repo.id)
+            self.assertEqual(closest_branch_name, (self.community_repo.id, 'refs/heads/11.0', 'default'))
+
+    @patch('odoo.addons.runbot.models.repo.runbot_repo._github')
+    def test_external_pr_with_comunity_pr_closest_branch(self, mock_github):
+        """ test matching external pr """
+        mock_github.return_value = {
+            'head': {'label': 'external_dev_repo:11.0-fix'},
+            'base': {'ref': '11.0'},
+            'state': 'open'
+        }
+        community_pr = self.Branch.create({
+            'repo_id': self.community_repo.id,
+            'name': 'refs/pull/123456'
+        })
+        mock_github.return_value = {
+            'head': {'label': 'external_dev_repo:11.0-fix'}, # if repo doenst match, it wont work, maybe a fix to do here?
+            'base': {'ref': '11.0'},
+            'state': 'open'
+        }
+        enterprise_pr = self.Branch.create({
+            'repo_id': self.enterprise_repo.id,
+            'name': 'refs/pull/123'
+        })
+        with patch('odoo.addons.runbot.models.repo.runbot_repo._rev_parse', new=rev_parse):
+            build = self.Build.create({
+                'branch_id': enterprise_pr.id,
+                'name': 'd0d0caca0000ffffffffffffffffffffffffffff',
+            })
+            dependency_repo = build.repo_id.dependency_ids[0]
+            closest_branch_name = build._get_closest_branch_name(dependency_repo.id)
+            self.assertEqual(closest_branch_name, (self.community_repo.id, 'refs/pull/123456', 'exact PR'))
+            # this is working here because pull_head_name is set, but on runbot pull_head_name is empty for external pr. why?
+
+    # the following test case is broken, but will match the default_master. Not sure we want to manage this but
+    # https://github.com/odoo-dev/enterprise/pull/13 is an example of this use case
+
+    #@patch('odoo.addons.runbot.models.repo.runbot_repo._github')
+    #def test_external_pr_pointing_dev_branch_closest_branch(self, mock_github):
+    #    """ test matching external pr """
+    #    dev_branch = self.Branch.create({
+    #        'repo_id': self.enterprise_dev_repo.id,
+    #        'name': 'refs/head/11.0-dev-branc'
+    #    })
+    #    mock_github.return_value = {
+    #        'head': {'label': 'external_dev_repo:11.0-fix-branch'},
+    #        'base': {'ref': '11.0-dev-branch'},
+    #        'state': 'open'
+    #    }
+    #    enterprise_dev_pr = self.Branch.create({
+    #        'repo_id': self.enterprise_dev_repo.id,
+    #        'name': 'refs/pull/123'
+    #    })
+    #    with patch('odoo.addons.runbot.models.repo.runbot_repo._rev_parse', new=rev_parse):
+    #        build = self.Build.create({
+    #            'branch_id': enterprise_dev_pr.id,
+    #            'name': 'd0d0caca0000ffffffffffffffffffffffffffff',
+    #        })
+    #        dependency_repo = build.repo_id.dependency_ids[0]
+    #        closest_branch_name = build._get_closest_branch_name(dependency_repo.id)
+    #        self.assertEqual(closest_branch_name, (self.community_repo.id, 'refs/heads/11.0', 'prefix'))
+
+    #@patch('odoo.addons.runbot.models.repo.runbot_repo._github')
+    #@patch('odoo.addons.runbot.models.branch.runbot_branch._is_on_remote')
+    #def test_internal_pr_pointing_dev_branch_closest_branch(self, mock_is_on_remote, mock_github):
+    #    """ test matching external pr """
+    #    mock_is_on_remote.return_value = True
+#
+    #    dev_branch = self.Branch.create({
+    #        'repo_id': self.enterprise_dev_repo.id,
+    #        'name': 'refs/head/11.0-dev-branch'
+    #    })
+    #    mock_github.return_value = {
+    #        'head': {'label': 'odoo-dev:11.0-fix-dev-branch'},
+    #        'base': {'ref': '11.0-dev-branch'},
+    #        'state': 'open'
+    #    }
+    #    enterprise_dev_pr = self.Branch.create({
+    #        'repo_id': self.enterprise_dev_repo.id,
+    #        'name': 'refs/pull/123'
+    #    })
+    #    with patch('odoo.addons.runbot.models.repo.runbot_repo._rev_parse', new=rev_parse):
+    #        build = self.Build.create({
+    #            'branch_id': enterprise_dev_pr.id,
+    #            'name': 'd0d0caca0000ffffffffffffffffffffffffffff',
+    #        })
+    #        dependency_repo = build.repo_id.dependency_ids[0]
+    #        closest_branch_name = build._get_closest_branch_name(dependency_repo.id)
+    #        self.assertEqual(closest_branch_name, (self.community_repo.id, 'refs/heads/11.0', 'prefix'))
+
+    #@patch('odoo.addons.runbot.models.repo.runbot_repo._github')
+    #@patch('odoo.addons.runbot.models.branch.runbot_branch._is_on_remote')
+    #def test_internal_pr_pointing_dev_branch_with_comm_branch_closest_branch(self, mock_is_on_remote, mock_github):
+    #    """ test matching external pr """
+    #    mock_is_on_remote.return_value = True
+
+    #    community_dev_branch = self.Branch.create({
+    #        'repo_id': self.community_dev_repo.id,
+    #        'name': 'refs/head/11.0-dev-branch'
+    #    })
+    #    dev_branch = self.Branch.create({
+    #        'repo_id': self.enterprise_dev_repo.id,
+    #        'name': 'refs/head/11.0-dev-branch'
+    #    })
+    #    mock_github.return_value = {
+    #        'head': {'label': 'odoo-dev:11.0-fix-dev-branch'},
+    #        'base': {'ref': '11.0-dev-branch'},
+    #        'state': 'open'
+    #    }
+    #    enterprise_dev_pr = self.Branch.create({
+    #        'repo_id': self.enterprise_dev_repo.id,
+    #        'name': 'refs/pull/123'
+    #    })
+    #    with patch('odoo.addons.runbot.models.repo.runbot_repo._rev_parse', new=rev_parse):
+    #        build = self.Build.create({
+    #            'branch_id': enterprise_dev_pr.id,
+    #            'name': 'd0d0caca0000ffffffffffffffffffffffffffff',
+    #        })
+    #        dependency_repo = build.repo_id.dependency_ids[0]
+    #        closest_branch_name = build._get_closest_branch_name(dependency_repo.id)
+    #        self.assertEqual(closest_branch_name, (self.community_dev_repo.id, 'refs/heads/11.0-dev-branch', 'exact'))

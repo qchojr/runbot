@@ -171,6 +171,27 @@ class runbot_branch(models.Model):
                             return (pr_branch, 'exact PR')
                     return (pull, 'exact PR')
 
+        # 4.Match a PR in enterprise without community PR
+        if self.pull_head_name:
+            if self.name.startswith('refs/pull'):
+                if ':' in self.pull_head_name:
+                    (repo_name, pr_branch_name) = self.pull_head_name.split(':')
+                    repos = self.env['runbot.repo'].browse(target_repo_ids).filtered(lambda r: ':%s/' % repo_name in r.name)
+                else:
+                    pr_branch_name = self.pull_head_name
+                    repos = target_repo
+                if repos:
+                    duplicate_branch_name = 'refs/heads/%s' % pr_branch_name
+                    domain = [
+                        ('repo_id', 'in', tuple(repos.ids)),  # target_repo_ids should contain the target duplicate repo
+                        ('branch_name', '=', pr_branch_name),
+                        ('pull_head_name', '=', False),
+                    ]
+                    targets = Branch.search(domain, order='id DESC')
+                    targets = sorted(targets, key=sort_by_repo)
+                    if targets and targets[0]._is_on_remote():
+                        return (targets[0], 'no PR')
+
         # 3. Match a branch which is the dashed-prefix of current branch name
         if '-' in name:  # not a pr ? or may be a pr ?
             # before it could have matche if pr pull_head_name was starting with branch
@@ -182,23 +203,6 @@ class runbot_branch(models.Model):
                 # shouldn't we only match on sticky?
                 if name.startswith('%s-' % branch.branch_name) and branch._is_on_remote():
                     return (branch, 'prefix')
-
-        # 4.Match a PR in enterprise without community PR
-        if self.pull_head_name:
-            if self.name.startswith('refs/pull') and ':' in self.pull_head_name:
-                (repo_name, pr_branch_name) = self.pull_head_name.split(':')
-                repo = self.env['runbot.repo'].browse(target_repo_ids).filtered(lambda r: ':%s/' % repo_name in r.name)
-                if repo:
-                    duplicate_branch_name = 'refs/heads/%s' % pr_branch_name
-                    domain = [
-                        ('repo_id', '=', repo.id),  # target_repo_ids should contain the target duplicate repo
-                        ('branch_name', '=', pr_branch_name),
-                        ('pull_head_name', '=', False),
-                    ]
-                    targets = Branch.search(domain, order='id DESC')
-                    targets = sorted(targets, key=sort_by_repo)
-                    if targets and targets[0]._is_on_remote():
-                        return (targets[0], 'no PR')
 
         # 5. last-resort value
         if self.target_branch_name:

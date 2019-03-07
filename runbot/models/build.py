@@ -864,9 +864,9 @@ class runbot_build_dependency(models.Model):
     _name = "runbot.build.dependency"
 
     build_id = fields.Many2one('runbot.build', 'Build', required=True, ondelete='cascade', index=True)
-    dependecy_repo = fields.Many2one('runbot.repo', 'Dependency repo', required=True, ondelete='cascade', index=True)
+    dependecy_repo = fields.Many2one('runbot.repo', 'Dependency repo', required=True, ondelete='cascade')
     # build_hash = fields.Char(related=build_id.name, required=True, index=True, autojoin=True)
-    dependency_hash = fields.Char('Name of commit')
+    dependency_hash = fields.Char('Name of commit', index=True)
     # just in case store branch
     closest_branch_id = fields.Many2one('runbot.branch', 'Branch', required=True, ondelete='cascade')
     match_type = fields.Char('Match Type')
