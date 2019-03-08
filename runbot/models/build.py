@@ -550,7 +550,8 @@ class runbot_build(models.Model):
                     repo._update_git(force=True)
                     # and better git fetch -p repo build.name
 
-                    repo._git_export(closest_name, build._path())
+                    # we actually need to give latest_commit
+                    repo._git_export(latest_commit, build._path())
 
                 # Finally mark all addons to move to openerp/addons
                 modules_to_move += [
