@@ -178,7 +178,14 @@ class runbot_build(models.Model):
         to prevent the above rules to mistakenly link PR of different repos together.
         """
         self.ensure_one()
-        return self.branch_id._get_closest_branch_name(target_repo_id)
+        (closest, match_type) = self.branch_id._get_closest_branch(target_repo_id)
+        if closest:
+            return (closest.repo_id.id, closest.name, match_type)
+        else:
+            assert False
+            # assert match_type == 'default'
+            # target_branch = self.branch_id.target_branch_name or 'master'
+            # return (target_repo_id, 'refs/heads/%s' % target_branch, 'default')
 
     @api.depends('name', 'branch_id.name')
     def _get_dest(self):
