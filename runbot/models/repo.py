@@ -385,6 +385,25 @@ class runbot_repo(models.Model):
             repos = self.search([('mode', '!=', 'disabled')])
             self._update(repos, force=False)
             self._create_pending_builds(repos)
+            
+
+            # for closest_branch, why check if branch is on remote, why not check localy (first?)?
+            # Update should be done on each repo before creation, (ok but order may be important)
+            # maybe using repo sequence to be sure that branches are fetched after pr. 
+            # (in case a pr is created juste between the two repo fetches)
+            # 1 update all repo ( odoo/enterprise, odoo-dev/enterprise, odoo/odoo, odoo-dev/odoo)
+                # -> avoid race conditions (unlikely, but better be safe):
+                # -> we want to be sure that the dependency exists is building enterprise build, enterprise first
+                # -> we want to be sure that branch exists if scanning pr, pr first
+
+            # for branch / build, user reverse order
+            # (odoo-dev/odoo, odoo/odoo, odoo-dev/enterprise, odoo/enterprise, odoo-dev/enterprise)
+            # 2 create all branches for all repo
+            # 3 create all builds for all repo
+                # when creating a build for a pr, we prefer that corresponding branche is alredy created
+                # instead of checking that branch _is_on_remote, check locally using rev_parse and return local result with branch
+
+
             self.env.cr.commit()
             time.sleep(update_frequency)
 

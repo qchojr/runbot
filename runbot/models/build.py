@@ -503,6 +503,8 @@ class runbot_build(models.Model):
             # update repo if needed
             if not build.repo_id._hash_exists(build.name):
                 build.repo_id._update(build.repo_id)
+                # why no git fetch -p repo build.name
+                # -> if branch has been deleted, commit may still be available
 
             # checkout branch
             build.branch_id.repo_id._git_export(build.name, build._path())
@@ -544,7 +546,10 @@ class runbot_build(models.Model):
                         'Building environment',
                         'Server built based on commit %s from %s' % (commit_oneline, closest_name)
                     )
+                    # why not test if not repo._hash_exists(build.name):
                     repo._update_git(force=True)
+                    # and better git fetch -p repo build.name
+
                     repo._git_export(closest_name, build._path())
 
                 # Finally mark all addons to move to openerp/addons
