@@ -109,8 +109,7 @@ class runbot_branch(models.Model):
         self.ensure_one()
         Branch = self.env['runbot.branch']
 
-        build = self
-        branch, repo = build.branch_id, build.repo_id
+        branch, repo = self, self.repo_id
         name = branch.pull_head_name or branch.branch_name
         target_branch = branch.target_branch_name or 'master'
 
@@ -173,7 +172,7 @@ class runbot_branch(models.Model):
                 return result_for(branch, 'prefix')
 
         # 4.Match a PR in enterprise without community PR
-        if build.branch_id.name.startswith('refs/pull') and ':' in name:
+        if self.name.startswith('refs/pull') and ':' in name:
             pr_branch_name = name.split(':')[1]
             duplicate_branch_name = 'refs/heads/%s' % pr_branch_name
             domain = [
