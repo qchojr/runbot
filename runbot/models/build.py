@@ -502,7 +502,8 @@ class runbot_build(models.Model):
 
             # update repo if needed
             if not build.repo_id._hash_exists(build.name):
-                build.repo_id._update(build.repo_id)
+                #build.repo_id._update(build.repo_id)
+                build.repo_id._git(['fetch', 'origin', build.name])
                 # why no git fetch -p repo build.name
                 # -> if branch has been deleted, commit may still be available
 
@@ -540,14 +541,16 @@ class runbot_build(models.Model):
                         'Building environment',
                         '%s match branch %s of %s' % (server_match, closest_name, repo.name)
                     )
+
+                    if not repo._hash_exists(latest_commit):
+                        repo._git(['fetch', 'origin', latest_commite])
+
                     latest_commit = build_dependency.dependency_hash
                     commit_oneline = repo._git(['show', '--pretty="%H -- %s"', '-s', latest_commit]).strip()
                     build._log(
                         'Building environment',
                         'Server built based on commit %s from %s' % (commit_oneline, closest_name)
                     )
-                    # why not test if not repo._hash_exists(build.name):
-                    repo._update_git(force=True)
                     # and better git fetch -p repo build.name
 
                     # we actually need to give latest_commit
