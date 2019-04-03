@@ -1,0 +1,11 @@
+id,name,is_default_parsed,logs_location,logs_name
+job00,job_00_init,0,,
+job02,job_02_docker_build,0,logs/job_02_docker_build.txt,
+job10,job_10_test_base,0,logs/job_10_test_base.txt,Full base logs
+job20,job_20_test_all,1,logs/job_20_test_all.txt,Full all logs
+job21,job_21_coverage_html,0,coverage/index.html,Coverage
+job22,job_22_coverage_result,0,coverage/index.html,Coverage
+job29,job_29_results,0,,
+job30,job_30_run,0,logs/job_30_run.txt,
+job25,job_25_restore,0,logs/job_25_restore.txt,Full restore logs
+job26,job_26_upgrade,0,logs/job_26_upgrade.txt,Full upgrade logs

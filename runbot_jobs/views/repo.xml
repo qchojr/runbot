@@ -1,0 +1,23 @@
+<odoo>
+  <data>
+    
+    <record id="repo_form" model="ir.ui.view">
+        <field name="name">runbot.repo.form</field>
+        <field name="model">runbot.repo</field>
+        <field name="inherit_id" ref="runbot.repo_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='hook_time']" position="after">
+                <field name="nobuild"/>
+                <field name="parse_job_ids" widget="many2many_tags" options="{'no_create': True}"/>
+                <field name="skip_job_ids" widget="many2many_tags" options="{'no_create': True}"/>
+                <field name="restored_db_name"/>
+                <field name="force_update_all" attrs="{'invisible': [('restored_db_name','=',False)]}"/>
+                <field name="testenable_job26" attrs="{'invisible': [('restored_db_name','=',False)]}"/>
+                
+            </xpath>
+        </field>
+    </record>
+          
+
+  </data>
+</odoo>
