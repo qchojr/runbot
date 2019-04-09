@@ -21,10 +21,16 @@ class RunbotJob(models.Model):
     _name = "runbot.job"
 
     name = fields.Char(required=True)
-    logs_location = fields.Char(string="Log file location")
+    logs_location = fields.Char(string="Log file location", compute="compute_logs_location")
     logs_name = fields.Char(string="Log name")
-
+    logs_path = fields.Char(string="Log path")
+    logs_filename = fields.Char(string="Log filename")
     is_default_parsed = fields.Boolean(default=False)
+
+    @api.depends('logs_path', 'logs_name')
+    def compute_logs_location(self):
+        for rec in self:
+            rec.logs_location = '%s/%s' % (rec.logs_path, rec.logs_filename)
 
 class runbot_repo(models.Model):
     _inherit = "runbot.repo"
@@ -78,7 +84,7 @@ class runbot_build(models.Model):
 
     @runbot_job('testing', 'running')
     def _job_29_results(self, build, log_path):
-        files_to_parse = build.repo_id.parse_job_ids.mapped('name')
+        files_to_parse = build.repo_id.parse_job_ids.mapped('logs_filename')
         build._log('run', 'Getting results for build %s' % build.dest)
         v = {}
         result = []
