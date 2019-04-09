@@ -12,6 +12,8 @@
               <group name="job_group">
                 <field name="name"/>
                 <field name="logs_name"/>
+                <field name="logs_path"/>
+                <field name="logs_filename"/>
                 <field name="logs_location"/>
                 <field name="is_default_parsed"/>
               </group>
@@ -27,6 +29,7 @@
         <field name="arch" type="xml">
             <tree string="Jobs">
                 <field name="name"/>
+                <field name="logs_location"/>
                 <field name="is_default_parsed"/>
             </tree>
         </field>
